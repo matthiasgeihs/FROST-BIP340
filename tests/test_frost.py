@@ -173,7 +173,6 @@ class Tests(unittest.TestCase):
         msg = b"fnord!"
         participant_indexes = (1, 2)
         agg = Aggregator(
-            pk,
             msg,
             (p1.nonce_commitment_pair, p2.nonce_commitment_pair),
             participant_indexes,
@@ -217,12 +216,9 @@ class Tests(unittest.TestCase):
         bip32_tweak = secrets.randbits(256) % Q
         taproot_tweak = secrets.randbits(256) % Q
         agg = Aggregator(
-            pk,
             msg,
             (p1.nonce_commitment_pair, p2.nonce_commitment_pair),
             participant_indexes,
-            bip32_tweak,
-            taproot_tweak,
         )
         message, nonce_commitment_pairs = agg.signing_inputs()
 

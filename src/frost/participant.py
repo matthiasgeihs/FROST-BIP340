@@ -872,11 +872,13 @@ class Participant:
         if group_commitment.x is None or group_commitment.y is None:
             raise ValueError("Group commitment is the point at infinity.")
 
+        # Y
         public_key = self.public_key
-        parity = 0
+        # s_i
+        aggregate_share = self.aggregate_share
         if bip32_tweak is not None and taproot_tweak is not None:
-            public_key, parity = Aggregator.tweak_key(
-                bip32_tweak, taproot_tweak, self.public_key
+            public_key, aggregate_share = self.tweak_key(
+                bip32_tweak, taproot_tweak, self.public_key, aggregate_share
             )
 
         # c = H_2(R, Y, m)
@@ -898,13 +900,11 @@ class Participant:
         )
         # λ_i
         lagrange_coefficient = self._lagrange_coefficient(participant_indexes)
-        # s_i
-        aggregate_share = self.aggregate_share
 
         # Negate s_i if Y is odd
         if public_key.y is None:
             raise ValueError("Public key is the point at infinity.")
-        if public_key.y % 2 != parity:
+        if public_key.y % 2 != 0:
             aggregate_share = Q - aggregate_share
 
         # z_i = d_i + (e_i * p_i) + λ_i * s_i * c
@@ -996,3 +996,70 @@ class Participant:
         lagrange_coefficient = self._lagrange_coefficient(participant_indexes)
 
         return (lagrange_coefficient * self.aggregate_share) * public_key
+    
+    @classmethod
+    def tweak_key(
+        cls, bip32_tweak: int, taproot_tweak: int, public_key: Point, key_share: int
+    ) -> Tuple[Point, int]:
+        tweaked_pub_key, adjusted_tweak, bip32_parity = cls._compute_tweaks(bip32_tweak, taproot_tweak, public_key)
+        
+        # Tweak key share.
+        adjusted_key_share = -key_share if tweaked_pub_key.y % 2 != bip32_parity else key_share
+        tweaked_key_share = (adjusted_key_share + adjusted_tweak) % Q
+        
+        # Normalize pub key to ensure that signing doesn't negate key share.
+        tweaked_pub_key = -tweaked_pub_key if tweaked_pub_key.y % 2 != 0 else tweaked_pub_key
+        
+        return tweaked_pub_key, tweaked_key_share
+
+    @classmethod
+    def _compute_tweaks(
+        cls, bip32_tweak: int, taproot_tweak: int, public_key: Point
+    ) -> Tuple[Point, int, int]:
+        """
+        Compute the tweaked keys and adjustments for the given BIP32 and Taproot tweaks.
+
+        This method derives a tweaked public key and calculates the corresponding
+        adjusted tweaks for use in cryptographic operations. It ensures that the
+        derived keys are valid and handles odd parity cases by adjusting the
+        tweaks accordingly.
+
+        Parameters:
+        bip32_tweak (int): The BIP32 tweak value to adjust the public key.
+        taproot_tweak (int): The Taproot tweak value to adjust the public key.
+        public_key (Point): The initial public key used as the base for tweaking.
+
+        Returns:
+        Tuple[Point, int, int]: A tuple containing the aggregate tweaked key (Point),
+                                the adjusted aggregate tweak (int), and the BIP32 key
+                                parity (int).
+
+        Raises:
+        ValueError: If the resulting tweaked public key is invalid.
+        """
+        # Derive the BIP32 child key
+        bip32_key = public_key + (bip32_tweak * G)
+        if bip32_key.y is None:
+            raise ValueError("Invalid public key.")
+        is_bip32_key_odd = bip32_key.y % 2 != 0
+        # Derive the x-only key
+        if is_bip32_key_odd:
+            bip32_key = -bip32_key
+        # Track the parity
+        bip32_parity = 1 if is_bip32_key_odd else 0
+        # Adjust the tweak if the key is odd
+        adjusted_bip32_tweak = -bip32_tweak if is_bip32_key_odd else bip32_tweak
+
+        # Add the taproot key
+        aggregate_key = bip32_key + (taproot_tweak * G)
+        if aggregate_key.y is None:
+            raise ValueError("Invalid public key.")
+        # Aggregate the tweaks
+        aggregate_tweak = (adjusted_bip32_tweak + taproot_tweak) % Q
+        # Adjust the aggregate tweak if the key is odd
+        adjusted_aggregate_tweak = (
+            (-aggregate_tweak) % Q if aggregate_key.y % 2 != 0 else aggregate_tweak
+        )
+
+        return aggregate_key, adjusted_aggregate_tweak, bip32_parity
+
